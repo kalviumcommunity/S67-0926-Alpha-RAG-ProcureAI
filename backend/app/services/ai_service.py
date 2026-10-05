@@ -226,3 +226,80 @@ def process_document(document_id: int) -> List[EmbeddedChunk]:
         if processing_started:
             _raise_processing_error(document_id, error)
         raise
+
+        def answer_question(
+    question: str,
+    document_ids: Optional[List[int]] = None,
+) -> GeneratedAnswer:
+    if not question or not question.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Question must not be empty",
+        )
+
+    retrieved_chunks: List[RetrievalResult] = retrieve(
+        question,
+        document_ids=document_ids,
+    )
+    if not retrieved_chunks:
+        return {
+            "answer": INSUFFICIENT_EVIDENCE_ANSWER,
+            "sources": [],
+        }
+
+    generated = generate_answer(question, retrieved_chunks)
+    if any(
+        phrase in generated["answer"].strip().lower()
+        for phrase in _INSUFFICIENT_PHRASES
+    ):
+        return {
+            "answer": INSUFFICIENT_EVIDENCE_ANSWER,
+            "sources": [],
+        }
+    if not _answer_is_grounded(generated["answer"], retrieved_chunks):
+        return {
+            "answer": INSUFFICIENT_EVIDENCE_ANSWER,
+            "sources": [],
+        }
+
+    return {
+        "answer": generated["answer"],
+        "sources": _build_answer_sources(retrieved_chunks),
+    }
+
+
+def stream_answer_question(
+    question: str,
+    document_ids: Optional[List[int]] = None,
+) -> Iterator[Tuple[str, Mapping[str, object]]]:
+    if not question or not question.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Question must not be empty",
+        )
+
+    retrieved_chunks: List[RetrievalResult] = retrieve(
+        question,
+        document_ids=document_ids,
+    )
+    if not retrieved_chunks:
+        yield "chunk", {"content": INSUFFICIENT_EVIDENCE_ANSWER}
+        yield "sources", {"sources": []}
+        yield "done", {}
+        return
+
+    answer_parts: List[str] = []
+    for token in stream_answer(question, retrieved_chunks):
+        answer_parts.append(token)
+        yield "chunk", {"content": token}
+
+    generated_answer = "".join(answer_parts)
+    if any(
+        phrase in generated_answer.strip().lower()
+        for phrase in _INSUFFICIENT_PHRASES
+    ) or not _answer_is_grounded(generated_answer, retrieved_chunks):
+        yield "error", {"detail": INSUFFICIENT_EVIDENCE_ANSWER}
+        return
+
+    yield "sources", {"sources": _build_answer_sources(retrieved_chunks)}
+    yield "done", {}
