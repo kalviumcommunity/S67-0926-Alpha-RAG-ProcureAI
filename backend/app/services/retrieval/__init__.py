@@ -1,6 +1,7 @@
 from .vector_store import (
 	COLLECTION_NAME,
 	RetrievalResult,
+	delete_document_chunks,
 	get_chunk,
 	get_collection,
 	retrieve,
@@ -10,6 +11,7 @@ from .vector_store import (
 __all__ = [
 	"COLLECTION_NAME",
 	"RetrievalResult",
+	"delete_document_chunks",
 	"get_chunk",
 	"get_collection",
 	"retrieve",

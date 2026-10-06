@@ -14,6 +14,7 @@ from fastapi import (
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.services.retrieval import delete_document_chunks
 from app.core.config import settings
 from app.db.database import get_db
 from app.db.models import Document, DocumentStatus, DocumentType, Supplier
@@ -218,6 +219,8 @@ async def delete_document(document_id: int, db: Session = Depends(get_db)):
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Unable to delete stored document file",
         )
+
+    delete_document_chunks(document_id)
 
     try:
         db.delete(document)

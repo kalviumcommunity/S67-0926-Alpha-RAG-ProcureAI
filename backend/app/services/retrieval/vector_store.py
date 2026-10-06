@@ -88,6 +88,16 @@ def upsert_embedded_chunks(chunks: Sequence[EmbeddedChunk]) -> None:
         ) from error
 
 
+def delete_document_chunks(document_id: int) -> None:
+    try:
+        get_collection().delete(where={"document_id": document_id})
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to remove document chunks from the vector store",
+        ) from error
+
+
 def get_chunk(chunk_id: str) -> Optional[Dict[str, Any]]:
     try:
         result = get_collection().get(ids=[chunk_id], include=["documents", "metadatas", "embeddings"])
@@ -188,6 +198,7 @@ def retrieve(
 __all__ = [
     "COLLECTION_NAME",
     "RetrievalResult",
+    "delete_document_chunks",
     "get_chunk",
     "get_collection",
     "retrieve",
