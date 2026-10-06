@@ -33,8 +33,9 @@ _REQUIRED_CHUNK_FIELDS = (
 _SYSTEM_PROMPT = """Answer the question using only the supplied retrieved evidence.
 Do not invent procurement terms, prices, dates, clauses, or conditions, and do not use outside knowledge or assumptions.
 Preserve important numbers, prices, dates, percentages, quantities, payment terms, delivery conditions, and contractual conditions exactly or materially.
-Identify the source metadata supporting the answer. Distinguish information from different documents.
-If evidence conflicts, report each conflicting value with its document and page source; do not silently choose one.
+Write a short, direct answer in plain language (one to three sentences, or a brief list when the question asks for several items).
+Do not include source names, document IDs, page numbers, chunk IDs, or citation markers in the answer; sources are displayed separately by the application.
+If evidence conflicts between documents, state each conflicting value and name the document it comes from; do not silently choose one.
 If the evidence is insufficient, clearly state that the available documents do not provide enough information to answer.
 """
 

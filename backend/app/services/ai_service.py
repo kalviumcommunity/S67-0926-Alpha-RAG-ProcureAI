@@ -33,6 +33,13 @@ _FACT_TOKEN_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _WORD_PATTERN = re.compile(r"\b[a-zA-Z]{4,}\b")
+# Numbers that come from citations / list formatting, not from document facts.
+_CITATION_REF_PATTERN = re.compile(
+    r"\b(?:sources?|documents?|doc|pages?|chunks?|section|id)\b\.?\s*(?:id\s*)?[:#]?\s*\d+(?:\s*[-,]\s*\d+)*",
+    re.IGNORECASE,
+)
+_BRACKET_REF_PATTERN = re.compile(r"\[\s*\d+(?:\s*[,-]\s*\d+)*\s*\]")
+_LIST_MARKER_PATTERN = re.compile(r"(?m)^\s*\d+[.)]\s+")
 _COMMON_WORDS = {
     "about",
     "available",
@@ -51,6 +58,9 @@ _COMMON_WORDS = {
     "with",
 }
 
+MAX_DISPLAYED_SOURCES = 3
+
+
 class ExtractedPage(TypedDict):
     document_id: int
     page_number: int
@@ -68,12 +78,15 @@ def _build_answer_sources(
     retrieved_chunks: List[RetrievalResult],
 ) -> List[AnswerSource]:
     sources: List[AnswerSource] = []
-    seen_chunk_ids = set()
+    seen = set()
 
     for chunk in retrieved_chunks:
-        if chunk["chunk_id"] in seen_chunk_ids:
+        key = (chunk["document_id"], " ".join(chunk["chunk_text"].split()))
+        if key in seen:
             continue
-        seen_chunk_ids.add(chunk["chunk_id"])
+        seen.add(key)
+        if len(sources) >= MAX_DISPLAYED_SOURCES:
+            break
         sources.append(
             {
                 "document_id": chunk["document_id"],
@@ -85,7 +98,24 @@ def _build_answer_sources(
 
     return sources
 
-    def _answer_is_grounded(
+def _number_core(token: str) -> str:
+    """Compare numbers regardless of units or spacing ('12 months' == '12-month' == '12')."""
+    return re.sub(r"[^\d.,]", "", token).strip(".,")
+
+
+def _strip_citation_noise(answer: str, retrieved_chunks: List[RetrievalResult]) -> str:
+    cleaned = answer
+    for chunk in retrieved_chunks:
+        for value in (chunk["chunk_id"], chunk["document_name"]):
+            if value:
+                cleaned = cleaned.replace(str(value), " ")
+    cleaned = _CITATION_REF_PATTERN.sub(" ", cleaned)
+    cleaned = _BRACKET_REF_PATTERN.sub(" ", cleaned)
+    cleaned = _LIST_MARKER_PATTERN.sub("", cleaned)
+    return cleaned
+
+
+def _answer_is_grounded(
     answer: str,
     retrieved_chunks: List[RetrievalResult],
 ) -> bool:
@@ -97,23 +127,32 @@ def _build_answer_sources(
 
     evidence = " ".join(chunk["chunk_text"] for chunk in retrieved_chunks)
     evidence_facts = {
-        token.replace(" ", "").lower()
-        for token in _FACT_TOKEN_PATTERN.findall(evidence)
+        _number_core(token) for token in _FACT_TOKEN_PATTERN.findall(evidence)
     }
+    # Metadata numbers the model is told to cite are legitimate, too.
+    for chunk in retrieved_chunks:
+        evidence_facts.add(str(chunk["page_number"]))
+        evidence_facts.add(str(chunk["document_id"]))
+
+    claim_text = _strip_citation_noise(answer, retrieved_chunks)
     answer_facts = {
-        token.replace(" ", "").lower()
-        for token in _FACT_TOKEN_PATTERN.findall(answer)
+        _number_core(token) for token in _FACT_TOKEN_PATTERN.findall(claim_text)
     }
-    if not answer_facts.issubset(evidence_facts):
+    unsupported = answer_facts - evidence_facts
+    if unsupported:
+        logger.warning("Grounding check failed: unsupported numbers %s", sorted(unsupported))
         return False
 
     answer_words = {
-        word.lower() for word in _WORD_PATTERN.findall(answer)
+        word.lower() for word in _WORD_PATTERN.findall(claim_text)
     } - _COMMON_WORDS
     evidence_words = {
         word.lower() for word in _WORD_PATTERN.findall(evidence)
     } - _COMMON_WORDS
-    return bool(answer_words & evidence_words)
+    if not (answer_words & evidence_words):
+        logger.warning("Grounding check failed: no shared words with evidence")
+        return False
+    return True
 
 
 def _mark_failed(document_id: int) -> None:
@@ -227,7 +266,7 @@ def process_document(document_id: int) -> List[EmbeddedChunk]:
             _raise_processing_error(document_id, error)
         raise
 
-        def answer_question(
+def answer_question(
     question: str,
     document_ids: Optional[List[int]] = None,
 ) -> GeneratedAnswer:
